@@ -1,0 +1,26 @@
+services:
+  genai-llm:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: genai-llm-assignment
+    volumes:
+      - ./:/workspace
+      - hf_cache:/workspace/.cache/huggingface
+    ports:
+      - "8888:8888"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: [gpu]
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - PYTHONPATH=/workspace
+      - PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:128
+    shm_size: "16gb"
+    tty: true
+
+volumes:
+  hf_cache:

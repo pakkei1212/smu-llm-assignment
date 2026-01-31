@@ -1,0 +1,19 @@
+# Core ML stack
+torch==2.1.2
+numpy<2.0
+transformers==4.40.2
+datasets==2.18.0
+accelerate==0.27.2
+peft==0.10.0
+trl==0.8.6
+bitsandbytes==0.43.1
+
+# Data / utils
+scikit-learn
+pandas
+matplotlib
+tqdm
+
+# Jupyter
+jupyterlab
+ipywidgets
