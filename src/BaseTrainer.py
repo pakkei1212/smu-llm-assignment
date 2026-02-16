@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 import torch
+import torch.nn.functional as F
 
 from transformers import (
     AutoTokenizer,
@@ -12,6 +13,8 @@ from transformers import (
     DataCollatorForSeq2Seq,
     DefaultDataCollator,
 )
+
+from src.ClassificationEvalTrainer import ClassificationEvalTrainer
 
 from peft import LoraConfig, get_peft_model, TaskType, PeftModel
 
@@ -40,8 +43,11 @@ class BaseLLMTrainer(ABC):
             self.tokenizer.pad_token = self.tokenizer.eos_token
 
         self.model = self._load_model()
+        self.class_weights = None
         self.task_type = self._task_type()
         self.data_collator = self._build_data_collator()
+        
+        self.use_lora = False
 
     # -------- Abstract hooks --------
     @abstractmethod
@@ -62,11 +68,20 @@ class BaseLLMTrainer(ABC):
         r: int = 8,
         lora_alpha: int = 16,
         lora_dropout: float = 0.05,
-        target_modules=None,
+        target_modules: list[str] | None = None,
         bias: str = "none",
     ):
+        """
+        Configure LoRA adapters for encoder-based models.
+
+        Defaults are chosen to be:
+        - encoder-safe
+        - stable under BF16
+        - suitable for hyperparameter tuning
+        """
+            
         if target_modules is None:
-            target_modules = ["q_proj", "v_proj"]
+            target_modules = ["query", "value"]
 
         lora_config = LoraConfig(
             r=r,
@@ -80,35 +95,66 @@ class BaseLLMTrainer(ABC):
         self.model = get_peft_model(self.model, lora_config)
         self.model.print_trainable_parameters()
 
+        self.use_lora = True 
+
     # -------- Training --------
     def train(
         self,
         train_dataset,
         eval_dataset,
         training_args: TrainingArguments,
-        compute_metrics=None,
+        data_collator: DataCollatorForLanguageModeling,
+        classification_eval_fn=None,
     ):
         self.model.enable_input_require_grads()
         self.model.gradient_checkpointing_enable()
         self.model.config.use_cache = False
 
-        trainer = Trainer(
+        trainer = ClassificationEvalTrainer(
             model=self.model,
             args=training_args,
             train_dataset=train_dataset,
             eval_dataset=eval_dataset,
-            data_collator=self.data_collator,
-            tokenizer=self.tokenizer,
-            compute_metrics=compute_metrics,
+            data_collator=data_collator,
+            class_weights=self.class_weights,
+            classification_eval_fn=classification_eval_fn,
         )
 
         trainer.train()
         self.trainer = trainer
 
-    # -------- Save / Load --------
+        if classification_eval_fn is not None:
+            return classification_eval_fn()
+        else:
+            return trainer.evaluate()
+
+    '''# -------- Save / Load --------
     def save_lora_adapters(self, path: str):
         self.model.save_pretrained(path)
         self.tokenizer.save_pretrained(path)
 
     def load_lora_adapters(self, path: str):
-        self.model = PeftModel.from_pretrained(self.model, path)
+        self.model = PeftModel.from_pretrained(
+            self.model,
+            path,
+            is_trainable=False
+        )
+        self.model.eval()'''
+
+    # -------- Save --------
+    def save_model(self, path: str):
+        self.model.save_pretrained(path)
+        self.tokenizer.save_pretrained(path)
+
+    # -------- Load --------
+    def load_model(self, path: str, use_lora: bool = False):
+        if use_lora:
+            self.model = PeftModel.from_pretrained(
+                self.model,
+                path,
+                is_trainable=False
+            )
+        else:
+            self.model = type(self.model).from_pretrained(path)
+
+        self.model.eval()

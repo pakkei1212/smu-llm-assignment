@@ -20,10 +20,19 @@ RUN ln -s /usr/bin/python3 /usr/bin/python
 
 WORKDIR /workspace
 
-# Install Python deps
+# ---- upgrade pip ----
+RUN pip install --upgrade pip
+
+# ---- install torch FIRST from PyTorch CUDA index ----
+RUN pip install torch==2.7.1+cu126 \
+    --index-url https://download.pytorch.org/whl/cu126
+
+# ---- install remaining deps WITHOUT re-installing torch ----
 COPY requirements.txt .
-RUN pip install --upgrade pip \
-    && pip install -r requirements.txt
+RUN pip install -r requirements.txt
+
+# ---- explicitly install jupyter ----
+RUN pip install jupyterlab
 
 # Expose Jupyter
 EXPOSE 8888

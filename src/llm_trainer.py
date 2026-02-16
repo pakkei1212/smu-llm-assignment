@@ -5,7 +5,8 @@ from transformers import (
     AutoTokenizer,
     Trainer,
     TrainingArguments,
-    DataCollatorForLanguageModeling
+    DataCollatorForLanguageModeling,
+    BitsAndBytesConfig,
 )
 from peft import LoraConfig, get_peft_model, TaskType, PeftModel
 import torch
@@ -37,14 +38,23 @@ class LLMTrainer:
         if model_type == "decoder":
             # use bf16 if available, else fp16
             dtype = torch.bfloat16 if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else torch.float16
+
+            quant_config = None
+            if load_in_4bit:
+                quant_config = BitsAndBytesConfig(
+                    load_in_4bit=True,
+                    bnb_4bit_compute_dtype=torch.bfloat16,
+                    bnb_4bit_quant_type="nf4",
+                    bnb_4bit_use_double_quant=True,
+                )
+
             model = AutoModelForCausalLM.from_pretrained(
                 model_name,
-                load_in_4bit=load_in_4bit,
+                quantization_config=quant_config,
                 torch_dtype=dtype,
+                device_map="auto" if load_in_4bit else None,
             )
-            if not load_in_4bit:
-                model = model.to("cuda")
-            
+
             self.model = model
             self.task_type = TaskType.CAUSAL_LM
             
@@ -112,7 +122,7 @@ class LLMTrainer:
             eval_dataset=eval_dataset,
             data_collator=data_collator,
             compute_metrics=compute_metrics,
-            tokenizer=self.tokenizer,
+
         )
         
         trainer.train()
