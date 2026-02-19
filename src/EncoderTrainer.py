@@ -30,11 +30,16 @@ class EncoderTrainer(BaseLLMTrainer):
     def __init__(
         self,
         model_name: str,
-        num_labels: int,
+        labels: list[str],  # Accept list: ["negative", "neutral", "positive"]
         device: str = "auto",
         load_in_4bit: bool = False,
     ):
-        self.num_labels = num_labels
+        # 1. Derive mappings from the input list
+        self.labels_list = [l.lower() for l in labels]
+        self.num_labels = len(self.labels_list)
+        self.id2label = {i: label for i, label in enumerate(self.labels_list)}
+        self.label2id = {label: i for i, label in enumerate(self.labels_list)}
+
         super().__init__(model_name, device, load_in_4bit)
 
     def _load_model(self):
@@ -49,18 +54,23 @@ class EncoderTrainer(BaseLLMTrainer):
                 bnb_4bit_quant_type="nf4",
                 bnb_4bit_use_double_quant=True,
             )
-            
+
+        id2label = {0: "negative", 1: "neutral", 2: "positive"}
+        label2id = {v: k for k, v in id2label.items()}
+
         model = AutoModelForSequenceClassification.from_pretrained(
             self.model_name,
             num_labels=self.num_labels,
+            id2label=id2label,
+            label2id=label2id,
             quantization_config=quant_config,
-            dtype=dtype,
+            torch_dtype=dtype,
             device_map="auto" if self.load_in_4bit else None,
         )
 
         # Never allow classifier head to be quantized
-        # This avoids bitsandbytes FP4 assertion crashes
-        model.classifier = model.classifier.to(dtype)
+        if hasattr(model, "classifier"):
+            model.classifier = model.classifier.to(dtype)
 
         # If not quantized, move full model normally
         if not self.load_in_4bit:
@@ -90,6 +100,17 @@ class EncoderTrainer(BaseLLMTrainer):
             return labels.index(lab)
         return -1
 
+    # Create a helper method to ensure consistency
+    def _tokenize(self, texts: list[str]):
+        return self.tokenizer(
+            texts,
+            truncation=True,
+            max_length=self.max_length,            # Must match MAX_LENGTH from training
+            padding="max_length",      # Force identical shape
+            add_special_tokens=True,   # Ensure [CLS] and [SEP] are added
+            return_tensors="pt",
+        )
+
     @torch.no_grad()
     def predict_labels(
         self,
@@ -112,6 +133,7 @@ class EncoderTrainer(BaseLLMTrainer):
             tokens = tokenizer(
                 text,
                 truncation=True,
+                max_length=self.max_length,        # or self.max_length if defined
                 padding=True,
                 return_tensors="pt",
             )
@@ -138,42 +160,47 @@ class EncoderTrainer(BaseLLMTrainer):
         model = self.model
         tokenizer = self.tokenizer
         model.eval()
-
         device = next(model.parameters()).device
-        all_probs = []
 
-        for ex in examples:
-            text = ex["input"]
+        all_probs = []
+        batch_size = 16
+
+        for i in range(0, len(examples), batch_size):
+            batch = examples[i:i+batch_size]
+            texts = [ex["input"] for ex in batch]
+
+            #tokens = self._tokenize(texts).to(device)
 
             tokens = tokenizer(
-                text,
+                texts,
                 truncation=True,
-                padding=True,
+                max_length=self.max_length,
+                padding="max_length", 
                 return_tensors="pt",
-            )
+            ).to(device)
 
-            tokens = {k: v.to(device) for k, v in tokens.items()}
+            with torch.no_grad():
+                outputs = model(**tokens)
+                logits = outputs.logits             # [B, C]
+                logits = logits.to(torch.float32)
+                probs = torch.softmax(logits, dim=-1)
 
-            outputs = model(**tokens)
-            logits = outputs.logits             # [1, C]
-            logits = logits.to(torch.float32)
-            probs = torch.softmax(logits, dim=-1)
-
-            all_probs.append(probs.squeeze(0).cpu().numpy())
+                all_probs.append(probs.cpu().numpy())
             
         return np.vstack(all_probs)
 
     def evaluate_classification(
         self,
         test_path: str,
-        labels: list[str] = ("negative", "neutral", "positive"),
+        labels: list[str] = None, # Defaults to self.labels_list if None
         average: str = "macro",
         verbose: bool = True,
     ) -> dict:
         """
         Encoder-based evaluation using logits.
         """
-        labels = [l.lower() for l in list(labels)]
+        # Use instance labels if none provided to the method
+        eval_labels = [l.lower() for l in labels] if labels else self.labels_list
         examples = self.load_test_json(test_path)
 
         y_true = []
@@ -183,7 +210,7 @@ class EncoderTrainer(BaseLLMTrainer):
             if "input" not in ex or "output" not in ex:
                 continue
 
-            y = self._label_to_id(ex["output"], labels)
+            y = self._label_to_id(ex["output"], eval_labels)
             if y == -1:
                 continue
 
@@ -199,10 +226,10 @@ class EncoderTrainer(BaseLLMTrainer):
         y_proba = self.predict_proba(kept, labels)
         y_pred = y_proba.argmax(axis=1)
 
-        print("Min prob:", y_proba.min())
-        print("Max prob:", y_proba.max())
-        print("Row sums (first 5):", y_proba[:5].sum(axis=1))
-        print("Any NaN in proba:", np.isnan(y_proba).any())
+        # print("Min prob:", y_proba.min())
+        # print("Max prob:", y_proba.max())
+        # print("Row sums (first 5):", y_proba[:5].sum(axis=1))
+        # print("Any NaN in proba:", np.isnan(y_proba).any())
 
         # Metrics
         acc = accuracy_score(y_true, y_pred)
@@ -234,3 +261,71 @@ class EncoderTrainer(BaseLLMTrainer):
             "f1": float(f1),
             "auc_ovr": float(auc) if auc is not None else None,
         }
+
+    # -------- Save --------
+    def save_model(self, path: str):
+        import os
+        os.makedirs(path, exist_ok=True)
+
+        if self.use_lora:
+            # Save LoRA adapter + classifier automatically
+            self.model.save_pretrained(path)
+        else:
+            # Full fine-tuned model
+            self.model.save_pretrained(path)
+
+        self.tokenizer.save_pretrained(path)
+
+    # -------- Load --------
+    def load_model(self, path: str, use_lora: bool = False):
+
+        # 1️⃣ Load tokenizer FIRST
+        self.tokenizer = AutoTokenizer.from_pretrained(path)
+
+        if use_lora:
+            # 2️⃣ Load clean backbone
+            base_model = AutoModelForSequenceClassification.from_pretrained(
+                self.model_name,
+                num_labels=self.num_labels
+            )
+
+            # 3️⃣ Attach LoRA adapter (classifier auto-restored)
+            self.model = PeftModel.from_pretrained(
+                base_model,
+                path,
+                is_trainable=False,
+            )
+
+            print("Loaded LoRA model successfully.")
+
+        else:
+            # Full fine-tuned model
+            self.model = AutoModelForSequenceClassification.from_pretrained(path)
+
+        self.model.to(self.device)
+        self.model.eval()
+
+
+    '''def load_model(self, path: str, use_lora: bool = False):
+
+        if use_lora:
+            # Load base pretrained model FIRST
+            base_model = self._load_model()
+
+            # Attach LoRA adapter
+            self.model = PeftModel.from_pretrained(
+                base_model,
+                path,
+                is_trainable=False
+            )
+
+            print(f"Loaded LoRA adapter from {path} on top of base model {self.model_name}")
+
+        else:
+            # Full fine-tuned model
+            self.model = AutoModelForSequenceClassification.from_pretrained(
+                path
+            )
+
+        self.model.to(self.device)
+        self.model.eval()'''

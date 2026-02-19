@@ -33,14 +33,17 @@ class BaseLLMTrainer(ABC):
         model_name: str,
         device: str = "auto",
         load_in_4bit: bool = False,
+        max_length = 128
     ):
         self.model_name = model_name
         self.load_in_4bit = load_in_4bit
         self.device = resolve_device(device)
 
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+        # DeBERTa-specific fix: Ensure padding token is set
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
+            self.tokenizer.pad_token_id = self.tokenizer.eos_token_id
 
         self.model = self._load_model()
         self.class_weights = None
@@ -48,6 +51,7 @@ class BaseLLMTrainer(ABC):
         self.data_collator = self._build_data_collator()
         
         self.use_lora = False
+        self.max_length = max_length
 
     # -------- Abstract hooks --------
     @abstractmethod

@@ -1,20 +1,22 @@
 # =========================
 # Core ML stack (as provided)
 # =========================
-torch==2.7.1+cu126
-numpy==2.4.1
+numpy
 transformers==5.0.0
 datasets==4.5.0
 accelerate==1.12.0
 peft==0.10.0
 trl==0.8.6
 bitsandbytes==0.49.1
+tiktoken>=0.5.0
+sentencepiece>=0.1.99
+protobuf>=4.0.0
 
 # =========================
 # Data / utils
 # =========================
-scikit-learn==1.8.0
-pandas==3.0.0
+scikit-learn
+pandas
 tqdm==4.67.1
 
 # matplotlib not installed in env
