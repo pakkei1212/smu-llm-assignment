@@ -28,7 +28,7 @@ smu-llm-assignment-main/
 │   ├── 02_training_lora(bert-base-cased).ipynb
 │   ├── 02_training_lora(bert-base-uncased).ipynb
 │   ├── 02_training_lora(deberta-v3-base).ipynb
-│   ├── 02_training_lora(finbert-tone).ipynb
+│   ├── 02_training_lora(finbert).ipynb
 │   ├── 02_training_lora(qwen).ipynb
 │   ├── 02_training_lora-nvd.ipynb
 │   └── 03_evaluation.ipynb
