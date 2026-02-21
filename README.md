@@ -15,7 +15,7 @@ Both Full Fine-Tuning (FFT) and LoRA (Low-Rank Adaptation) are implemented and c
 ---
 
 ## 📂 Repository Structure
-
+```
 smu-llm-assignment-main/
 │
 ├── data/
@@ -45,7 +45,7 @@ smu-llm-assignment-main/
 ├── docker-compose.yml
 ├── requirements.txt
 └── sbatchTemplatePython.sh
-
+```
 ---
 
 ## 🧠 Architecture Design
