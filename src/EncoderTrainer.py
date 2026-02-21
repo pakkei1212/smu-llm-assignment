@@ -304,28 +304,3 @@ class EncoderTrainer(BaseLLMTrainer):
 
         self.model.to(self.device)
         self.model.eval()
-
-
-    '''def load_model(self, path: str, use_lora: bool = False):
-
-        if use_lora:
-            # Load base pretrained model FIRST
-            base_model = self._load_model()
-
-            # Attach LoRA adapter
-            self.model = PeftModel.from_pretrained(
-                base_model,
-                path,
-                is_trainable=False
-            )
-
-            print(f"Loaded LoRA adapter from {path} on top of base model {self.model_name}")
-
-        else:
-            # Full fine-tuned model
-            self.model = AutoModelForSequenceClassification.from_pretrained(
-                path
-            )
-
-        self.model.to(self.device)
-        self.model.eval()'''
