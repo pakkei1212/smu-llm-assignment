@@ -1,5 +1,5 @@
 
-# 📊 SMU LLM Assignment – Financial Sentiment Classification
+# 📊 CS 614 Gen AI LLM Assignment – Financial Sentiment Classification
 
 ## 📌 Project Overview
 
